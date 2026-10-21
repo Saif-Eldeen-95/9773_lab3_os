@@ -35,12 +35,13 @@ void parse(std::vector<Token> &tokens)
     SimpleCommand *currentSimpleCommand = new SimpleCommand();
 
     Command::_currentCommand.execute();
-    /*
-      Implement this function 
-      you must parse for all possible tokens scenario
-      right now command.execute only print the format , you will inject it in your logic.
-
-    */
+//    size_t i = 0;
+//    while (tokens[i].type != TOKEN_EOF)
+//    {
+//        currentSimpleCommand->insertArgument(tokens[i].value.c_str());
+//        i++;
+//    }
+//    Command::_currentCommand.insertSimpleCommand(currentSimpleCommand);
 }
 
 SimpleCommand::SimpleCommand()
