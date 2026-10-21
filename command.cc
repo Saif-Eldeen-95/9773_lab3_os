@@ -31,10 +31,10 @@
 
 void parse(std::vector<Token> &tokens)
 {
-    Command currentCommand;
+    Command::_currentCommand;
     SimpleCommand *currentSimpleCommand = new SimpleCommand();
 
-    currentCommand.execute();
+    Command::_currentCommand.execute();
     /*
       Implement this function 
       you must parse for all possible tokens scenario
@@ -48,6 +48,7 @@ SimpleCommand::SimpleCommand()
     _numberOfAvailableArguments = 5;
     _numberOfArguments = 0;
     _arguments = (char **)malloc(_numberOfAvailableArguments * sizeof(char *));
+    _arguments[0] = NULL;
 }
 
 void SimpleCommand::insertArgument(char *argument)
@@ -69,13 +70,15 @@ Command::Command()
 {
     _numberOfAvailableSimpleCommands = 1;
     _simpleCommands = (SimpleCommand **)
-        malloc(_numberOfSimpleCommands * sizeof(SimpleCommand *));
+        malloc(_numberOfAvailableSimpleCommands * sizeof(SimpleCommand *));
 
     _numberOfSimpleCommands = 0;
     _outFile = 0;
     _inputFile = 0;
     _errFile = 0;
     _background = 0;
+    _append = 0;
+    _out_error = 0;
 }
 
 void Command::insertSimpleCommand(SimpleCommand *simpleCommand)
@@ -101,7 +104,7 @@ void Command::clear()
         }
 
         free(_simpleCommands[i]->_arguments);
-        free(_simpleCommands[i]);
+        delete _simpleCommands[i];
     }
 
     if (_outFile)
@@ -124,6 +127,8 @@ void Command::clear()
     _inputFile = 0;
     _errFile = 0;
     _background = 0;
+    _append = 0;
+    _out_error = 0;
 }
 
 void Command::print()
@@ -160,17 +165,18 @@ void Command::execute()
     */
 
     clear();
-    prompt();
 }
 
 void Command::prompt()
 {
-    printf("myshell>");
-    fflush(stdout);
     std::string input;
     while (true)
     {
-        std::getline(std::cin, input); 
+        printf("myshell>");
+        fflush(stdout);
+        if(!std::getline(std::cin, input)) {
+            break;
+        }
         std::vector<Token> tokens = tokenize(input);
         parse(tokens);
     }
