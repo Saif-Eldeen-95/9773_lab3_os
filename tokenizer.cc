@@ -2,65 +2,113 @@
 #include <sstream>
 #include <iostream>
 
-std::vector<Token> tokenize(const std::string &input)
-{
-    std::vector<Token> tokens;
-    std::istringstream stream(input);
-    std::string word;
+static TokenType classifyWord(const std::vector<Token> &tokens, const std::string &word){
+    if (tokens.empty())
+        return TOKEN_COMMAND;
 
-    while (stream >> word)
+    TokenType prev = tokens.back().type;
+    if (prev == TOKEN_REDIRECT ||
+        prev == TOKEN_APPEND ||
+        prev == TOKEN_INPUT ||
+        prev == TOKEN_ERROR ||
+        prev == TOKEN_REDIRECT_AND_ERROR ||
+        prev == TOKEN_COMMAND ||
+        prev == TOKEN_ARGUMENT ||
+        word[0] == '-' || word.find('/') != std::string::npos || word.find('.') != std::string::npos)
     {
-        Token token;
+        return TOKEN_ARGUMENT;
+    }
+    return TOKEN_COMMAND;
+}
 
-        if (word == "|")
-            token.type = TOKEN_PIPE;
-        else if (word == ">")
-            token.type = TOKEN_REDIRECT;
-        else if (word == ">>")
-            token.type = TOKEN_APPEND;
-        else if (word == "<")
-            token.type = TOKEN_INPUT;
-        else if (word == "&")
-            token.type = TOKEN_BACKGROUND;
-        else if (word == "2>")
-            token.type = TOKEN_ERROR;
-        else if (word == ">>&")
-            token.type = TOKEN_REDIRECT_AND_ERROR;
-        else
-            {
-                if (!tokens.empty())
-                {
-                    Token &prev = tokens.back();
-                    if (prev.type == TOKEN_REDIRECT ||
-                        prev.type == TOKEN_APPEND ||
-                        prev.type == TOKEN_INPUT ||
-                        prev.type == TOKEN_ERROR || 
-                        prev.type == TOKEN_REDIRECT_AND_ERROR ||
-                        prev.type == TOKEN_COMMAND || 
-                        prev.type == TOKEN_ARGUMENT || 
-                        word[0] == '-' ||
-                        word.find('/') != std::string::npos ||
-                        word.find('.') != std::string::npos
+static bool isSpecial(char c){
+    return c == '|' || c == '<' || c == '>' || c == '&';
+}
 
-                    )
-                    {
-                        token.type = TOKEN_ARGUMENT;
-                    }
-                    else
-                    {
-                        token.type = TOKEN_COMMAND;
-                    }
-                }
-                else
-                {
-                    token.type = TOKEN_COMMAND;
-                }
+std::vector<Token> tokenize(const std::string &input){
+    std::vector<Token> tokens;
+    size_t i = 0;
+    size_t n = input.size();
+
+    while (i < n){
+        char c = input[i];
+        if (isspace((unsigned char)c)){                         // skip spaces 
+            i++;
+            continue;
+        }
+
+        // ** special symbols (spliting tokens even without spaces) **
+        
+        if (c == '|'){
+            tokens.push_back({TOKEN_PIPE, "|"});
+            i++;
+            continue;
+        }
+
+        if (c == '<'){
+            tokens.push_back({TOKEN_INPUT, "<"});
+            i++;
+            continue;
+        }
+
+        if (c == '&'){
+            tokens.push_back({TOKEN_BACKGROUND, "&"});
+            i++;
+            continue;
+        }
+
+        if (c == '>'){
+            // ** ( correcte condition order ) longest match first: >>& then >> then > **
+            if (input.compare(i, 3, ">>&") == 0){
+                tokens.push_back({TOKEN_REDIRECT_AND_ERROR, ">>&"});
+                i += 3;
             }
+            else if (input.compare(i, 2, ">>") == 0){
+                tokens.push_back({TOKEN_APPEND, ">>"});
+                i += 2;
+            }
+            else{
+                tokens.push_back({TOKEN_REDIRECT, ">"});
+                i++;
+            }
+            continue;
+        }
 
+        // ** "2>" only counts when it starts a word (so file2> is not an error redirect) **
+        if (c == '2' && i + 1 < n && input[i + 1] == '>'){
+            tokens.push_back({TOKEN_ERROR, "2>"});
+            i += 2;
+            continue;
+        }
+
+        // ** normal word (may contain quoted parts) **
+        std::string word;
+        while (i < n && !isspace((unsigned char)input[i]) && !isSpecial(input[i])){
+            if (input[i] == '"' || input[i] == '\''){
+                char quote = input[i];
+                i++;                                                               // skip the opening quote
+                while (i < n && input[i] != quote){
+                    word += input[i];
+                    i++;
+                }
+                if (i >= n){
+                    std::cerr << "Error: unmatched quote." << std::endl;
+                    tokens.clear();
+                    tokens.push_back({TOKEN_EOF, ""});
+                    return tokens;
+                }
+                i++;                                                               // skip the closing quote
+            }
+            else{
+                word += input[i];
+                i++;
+            }
+        }
+        Token token;
+        token.type = classifyWord(tokens, word);
         token.value = word;
         tokens.push_back(token);
     }
-
     tokens.push_back({TOKEN_EOF, ""});
     return tokens;
 }
