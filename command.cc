@@ -78,8 +78,7 @@ void parse(std::vector<Token> &tokens)
     if (tokens.empty() || tokens[0].type == TOKEN_EOF)             // if no arguments (only EOF token), return
     return;
     size_t i = 0;
-  while (i < tokens.size() && tokens[i].type != TOKEN_EOF)
-    {
+    while (i < tokens.size() && tokens[i].type != TOKEN_EOF){
         // ** TOKEN_PIPE handling ** 
         if(tokens[i].type == TOKEN_PIPE){                          // if pipe, close current command and start a new one
             if(currentSimpleCommand->_numberOfArguments == 0) {    // but check if the current command has any arguments, if not,print error and clear
@@ -102,6 +101,20 @@ void parse(std::vector<Token> &tokens)
             }
             else{
                 std::cerr << "Error: Missing filename after redirection." << std::endl;
+                freeSimple(currentSimpleCommand);
+                Command::_currentCommand.clear();
+                return;
+            }
+        }
+        // ** TOKEN_INPUT handling **
+        if(tokens[i].type == TOKEN_INPUT){
+            if(  i + 1 < tokens.size() && tokens[i+1].type == TOKEN_ARGUMENT){                // check if the next token is an argument (filename), if not, print error and clear
+                Command::_currentCommand._inputFile = strdup(tokens[i+1].value.c_str());      // reading input from the file specified in the next token
+                i += 2;                                            // skip the redirection token and the filename token
+                continue;
+            }
+            else{
+                std::cerr << "Error: Missing filename after input redirection." << std::endl;
                 freeSimple(currentSimpleCommand);
                 Command::_currentCommand.clear();
                 return;
@@ -167,11 +180,9 @@ void parse(std::vector<Token> &tokens)
         }
         // ** normal arguments + wildcard handling (* and ?) **
         std::string word = tokens[i].value;
-        if (word.find('*') != std::string::npos || word.find('?') != std::string::npos)
-        {
+        if (word.find('*') != std::string::npos || word.find('?') != std::string::npos){
             glob_t g;
-            if (glob(word.c_str(), 0, NULL, &g) == 0)                    // find every file that matches
-            {
+            if (glob(word.c_str(), 0, NULL, &g) == 0){                    // find every file that matches
                 for (size_t k = 0; k < g.gl_pathc; k++)
                     currentSimpleCommand->insertArgument(strdup(g.gl_pathv[k]));   // each file is a separate argument
                 globfree(&g);
