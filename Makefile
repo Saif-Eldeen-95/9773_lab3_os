@@ -15,5 +15,6 @@ command.o: command.cc command.h tokenizer.h
 tokenizer.o: tokenizer.cc tokenizer.h
 	$(CXX) $(CXXFLAGS) -c tokenizer.cc
 
+.PHONY: clean
 clean:
 	rm -f *.o myshell
