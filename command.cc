@@ -36,6 +36,42 @@ static void freeSimple(SimpleCommand *sc)
     free(sc->_arguments);
     delete sc;
 }
+
+// 1 while the shell is waiting for a foreground command
+static volatile sig_atomic_t waiting = 0;
+
+// write one line in the log file for every child that terminated
+static void logChild(pid_t pid)
+{
+    char msg[64];
+    int len = snprintf(msg, sizeof(msg), "Child process %d terminated\n", (int)pid);
+    int fd = open("shell.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
+    if (fd >= 0)
+    {
+        if (write(fd, msg, len) < 0)
+            perror("log");
+        close(fd);
+    }
+}
+
+// Ctrl-C: do not kill the shell, just go to a new line (and show the prompt again)
+static void sigintHandler(int sig)
+{
+    (void)sig;
+    if (write(1, "\n", 1) < 0) {}
+    if (!waiting)
+        if (write(1, "myshell>", 8) < 0) {}
+}
+
+// a child terminated: collect every finished child and log it
+static void sigchldHandler(int sig)
+{
+    (void)sig;
+    pid_t pid;
+    while ((pid = waitpid(-1, NULL, WNOHANG)) > 0)
+        logChild(pid);
+}
+
 void parse(std::vector<Token> &tokens)
 {
     SimpleCommand *currentSimpleCommand = new SimpleCommand();
@@ -129,9 +165,24 @@ void parse(std::vector<Token> &tokens)
             i++;                                                 // skip the '&' token
             continue;
         }
-        // ** normal arguments **
-        currentSimpleCommand->insertArgument(strdup(tokens[i].value.c_str())); //strdup de bet7wel el string le char* 3ashan el insertArgument bta5od const char* 
+        // ** normal arguments + wildcard handling (* and ?) **
+        std::string word = tokens[i].value;
+        if (word.find('*') != std::string::npos || word.find('?') != std::string::npos)
+        {
+            glob_t g;
+            if (glob(word.c_str(), 0, NULL, &g) == 0)                    // find every file that matches
+            {
+                for (size_t k = 0; k < g.gl_pathc; k++)
+                    currentSimpleCommand->insertArgument(strdup(g.gl_pathv[k]));   // each file is a separate argument
+                globfree(&g);
+                i++;
+                continue;
+            }
+        }
+        // ** normal word, or no file matched **
+        currentSimpleCommand->insertArgument(strdup(word.c_str()));      //strdup de bet7wel el string le char* 3ashan el insertArgument bta5od const char* 
         i++;
+        
     }
     if(currentSimpleCommand->_numberOfArguments == 0) {    // check if the last command has any arguments, if not, print error and clear
         std::cerr << "Error: Missing command after pipe." << std::endl;
@@ -257,12 +308,136 @@ void Command::print()
     printf("\n\n");
 }
 
-void Command::execute()
-{
-    print();
-    /*
-        Write your code here
-    */
+void Command::execute(){
+    // nothing to run
+    if (_numberOfSimpleCommands == 0){
+        clear();
+        return;
+    }
+
+    // ** built-in commands (run inside the shell itself, no fork) **
+    if (_numberOfSimpleCommands == 1){
+        char *name = _simpleCommands[0]->_arguments[0];
+        if (strcmp(name, "exit") == 0){
+            printf("Good bye!!\n");
+            exit(0);
+        }
+
+        if (strcmp(name, "cd") == 0){
+            char *dir = _simpleCommands[0]->_arguments[1];     // cd [dir]
+            if (dir == NULL)
+                dir = getenv("HOME");                          // no dir -> go home
+            if (chdir(dir) != 0)
+                perror("cd");
+            clear();
+            return;
+        }
+    }
+
+    // save the default input/output/error to restore them after the command
+    int defaultIn = dup(0);
+    int defaultOut = dup(1);
+    int defaultErr = dup(2);
+
+    // ** input: from a file or the default input **
+    int fdIn;
+    if (_inputFile){
+        fdIn = open(_inputFile, O_RDONLY);                     // open() returns -1 if the file does not exist or cannot be opened
+        if (fdIn < 0){
+            perror(_inputFile);                                // file not found
+            close(defaultIn);
+            close(defaultOut);
+            close(defaultErr);
+            clear();
+            return;
+        }
+    }
+    else{
+        fdIn = dup(defaultIn);
+    }
+
+    // ** error: to a file or the default error **
+    int fdErr;
+    if (_errFile){                                                     // if the user specified an error file, open it for writing (create it if it doesn't exist)
+        fdErr = open(_errFile, O_WRONLY | O_CREAT | (_out_error ? O_APPEND : O_TRUNC), 0644); 
+        if (fdErr < 0){
+            perror(_errFile);
+            fdErr = dup(defaultErr);
+        }
+    }
+    else{                                                             // if no error file specified, use the default error
+        fdErr = dup(defaultErr);
+    }
+
+    int pid = 0;
+    for (int i = 0; i < _numberOfSimpleCommands; i++){
+        // the input of this command
+        dup2(fdIn, 0);
+        close(fdIn);
+
+        // the output of this command
+        int fdOut;
+        if (i == _numberOfSimpleCommands - 1){
+            // last command: output goes to a file or the default output
+            if (_outFile){                                       // if the user specified an output file, open it for writing (create it if it doesn't exist)
+                fdOut = open(_outFile, O_WRONLY | O_CREAT | (_append ? O_APPEND : O_TRUNC), 0644);
+                if (fdOut < 0){
+                    perror(_outFile);
+                    fdOut = dup(defaultOut);
+                }
+            }
+            else{                                                // no output file specified, use the default output
+                fdOut = dup(defaultOut);
+            }
+        }
+        else{
+            // not the last command: output goes into a pipe, the next command reads from it
+            int fdPipe[2];
+            if (pipe(fdPipe) < 0){
+                perror("pipe");
+                break;
+            }
+            fdOut = fdPipe[1];                        // write end of the pipe
+            fdIn = fdPipe[0];                         // read end of the pipe, will be used as input for the next command
+        }
+
+        dup2(fdOut, 1);
+        close(fdOut);
+        dup2(fdErr, 2);
+
+        pid = fork();
+        if (pid < 0){
+            perror("fork");
+            break;
+        }
+        if (pid == 0){
+            // child: close the extra copies and run the command
+            close(defaultIn);
+            close(defaultOut);
+            close(defaultErr);
+            close(fdErr);
+            execvp(_simpleCommands[i]->_arguments[0], _simpleCommands[i]->_arguments);
+            perror(_simpleCommands[i]->_arguments[0]);         // command not found
+            _exit(1);
+        }
+    }
+
+    // restore the default input/output/error of the shell
+    dup2(defaultIn, 0);
+    dup2(defaultOut, 1);
+    dup2(defaultErr, 2);
+    close(defaultIn);
+    close(defaultOut);
+    close(defaultErr);
+    close(fdErr);
+
+    // wait for the last command to finish if it's a foreground command
+    if (!_background && pid > 0){
+        waiting = 1;
+        if (waitpid(pid, NULL, 0) > 0)      // if the handler already collected it, it logged it
+            logChild(pid);
+        waiting = 0;
+    }
 
     clear();
 }
@@ -287,6 +462,16 @@ SimpleCommand *Command::_currentSimpleCommand;
 
 int main()
 {
+    struct sigaction sa;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;               // do not let signals break getline
+
+    sa.sa_handler = sigintHandler;          // Ctrl-C
+    sigaction(SIGINT, &sa, NULL);
+
+    sa.sa_handler = sigchldHandler;         // child terminated
+    sigaction(SIGCHLD, &sa, NULL);
+
     Command::_currentCommand.prompt();
     return 0;
 }
