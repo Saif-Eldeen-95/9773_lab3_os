@@ -330,7 +330,7 @@ void Command::execute(){
     if (_numberOfSimpleCommands == 1){
         char *name = _simpleCommands[0]->_arguments[0];
         if (strcmp(name, "exit") == 0){
-            printf("Good bye!!\n");
+            printf("########## Good bye!! ###############\n");
             exit(0);
         }
 
